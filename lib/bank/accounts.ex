@@ -40,4 +40,11 @@ defmodule Bank.Accounts do
     |> Account.changeset(attrs)
     |> Repo.update()
   end
+
+  @doc """
+  Delete an account.
+  """
+  def delete_account(%Account{} = account) do
+    Repo.delete(account)
+  end
 end
