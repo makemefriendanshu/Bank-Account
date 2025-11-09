@@ -4,6 +4,22 @@ defmodule Bank.Accounts do
   alias Bank.Accounts.Transaction
 
   @doc """
+  List the latest N transactions across all accounts, with account preloaded.
+  """
+  def list_latest_transactions_with_account(limit) when is_integer(limit) and limit > 0 do
+    from(t in Transaction,
+      order_by: [desc: t.inserted_at],
+      preload: [:account],
+      limit: ^limit
+    )
+    |> Repo.all()
+  end
+
+  import Ecto.Query, warn: false
+  alias Bank.Repo
+  alias Bank.Accounts.Transaction
+
+  @doc """
   Credit an account by amount and record transaction.
   """
   def credit_account(%Bank.Accounts.Account{} = account, amount)
@@ -106,5 +122,62 @@ defmodule Bank.Accounts do
   """
   def delete_account(%Account{} = account) do
     Repo.delete(account)
+  end
+
+  @doc """
+  List all transactions across all accounts, ordered by inserted_at descending, with optional filters.
+  Filters:
+    - account_id: only transactions for this account
+    - start_date: only transactions on/after this date (YYYY-MM-DD)
+    - end_date: only transactions on/before this date (YYYY-MM-DD)
+  """
+
+  def list_all_transactions_filtered(
+        account_id \\ nil,
+        start_date \\ nil,
+        end_date \\ nil,
+        type \\ nil
+      ) do
+    query =
+      from(t in Transaction,
+        order_by: [desc: t.inserted_at],
+        preload: [:account]
+      )
+
+    query =
+      if account_id do
+        from(t in query, where: t.account_id == ^account_id)
+      else
+        query
+      end
+
+    query =
+      if start_date do
+        {:ok, start_dt} = Date.from_iso8601(start_date)
+        from(t in query, where: fragment("date(?)", t.inserted_at) >= ^start_dt)
+      else
+        query
+      end
+
+    query =
+      if end_date do
+        {:ok, end_dt} = Date.from_iso8601(end_date)
+        from(t in query, where: fragment("date(?)", t.inserted_at) <= ^end_dt)
+      else
+        query
+      end
+
+    query =
+      if type do
+        from(t in query, where: t.type == ^type)
+      else
+        query
+      end
+
+    Repo.all(query)
+  end
+
+  def list_all_transactions do
+    list_all_transactions_filtered(nil, nil, nil)
   end
 end

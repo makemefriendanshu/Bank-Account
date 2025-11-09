@@ -10,6 +10,20 @@ defmodule BankWeb.AccountLive.Index do
     accounts = Accounts.list_accounts()
     changeset = Accounts.change_account(%Account{})
 
+    # Default filter values: all accounts, no date range
+    filter_account_id = nil
+    filter_start_date = nil
+    filter_end_date = nil
+    filter_type = nil
+
+    all_transactions =
+      Accounts.list_all_transactions_filtered(
+        filter_account_id,
+        filter_start_date,
+        filter_end_date,
+        filter_type
+      )
+
     {:ok,
      socket
      |> assign(:accounts, accounts)
@@ -23,7 +37,49 @@ defmodule BankWeb.AccountLive.Index do
      |> assign(:transaction_account, nil)
      |> assign(:transactions, [])
      |> assign(:credit_form, nil)
-     |> assign(:debit_form, nil)}
+     |> assign(:debit_form, nil)
+     |> assign(:all_transactions, all_transactions)
+     |> assign(:filter_account_id, filter_account_id)
+     |> assign(:filter_start_date, filter_start_date)
+     |> assign(:filter_end_date, filter_end_date)
+     |> assign(:filter_type, filter_type)
+     |> assign(:show_filters, false)}
+  end
+
+  @impl true
+  def handle_event(
+        "filter_transactions",
+        %{
+          "account_id" => account_id,
+          "start_date" => start_date,
+          "end_date" => end_date,
+          "type" => type
+        },
+        socket
+      ) do
+    # Normalize empty string to nil
+    account_id = if account_id == "", do: nil, else: account_id
+    start_date = if start_date == "", do: nil, else: start_date
+    end_date = if end_date == "", do: nil, else: end_date
+    type = if type == "", do: nil, else: type
+    # Convert account_id to integer if present
+    account_id = if account_id, do: String.to_integer(account_id), else: nil
+
+    all_transactions =
+      Bank.Accounts.list_all_transactions_filtered(account_id, start_date, end_date, type)
+
+    {:noreply,
+     socket
+     |> assign(:all_transactions, all_transactions)
+     |> assign(:filter_account_id, account_id)
+     |> assign(:filter_start_date, start_date)
+     |> assign(:filter_end_date, end_date)
+     |> assign(:filter_type, type)}
+  end
+
+  @impl true
+  def handle_event("toggle_filters", _params, socket) do
+    {:noreply, assign(socket, :show_filters, !socket.assigns.show_filters)}
   end
 
   @impl true
@@ -274,6 +330,18 @@ defmodule BankWeb.AccountLive.Index do
   @impl true
   def handle_info({:page_update, _payload}, socket) do
     accounts = Accounts.list_accounts()
-    {:noreply, assign(socket, :accounts, accounts)}
+    # Re-apply filters
+    account_id = socket.assigns[:filter_account_id]
+    start_date = socket.assigns[:filter_start_date]
+    end_date = socket.assigns[:filter_end_date]
+    type = socket.assigns[:filter_type]
+
+    all_transactions =
+      Bank.Accounts.list_all_transactions_filtered(account_id, start_date, end_date, type)
+
+    {:noreply,
+     socket
+     |> assign(:accounts, accounts)
+     |> assign(:all_transactions, all_transactions)}
   end
 end
