@@ -1817,9 +1817,6 @@
   .min-h-screen {
     min-height: 100vh;
   }
-  .btn-block {
-    width: 100%;
-  }
   .w-0 {
     width: calc(var(--spacing) * 0);
   }
