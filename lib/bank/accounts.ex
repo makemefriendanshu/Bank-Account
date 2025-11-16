@@ -22,7 +22,8 @@ defmodule Bank.Accounts do
   @doc """
   Credit an account by amount and record transaction.
   """
-  def credit_account(%Bank.Accounts.Account{} = account, amount)
+
+  def credit_account(%Bank.Accounts.Account{} = account, amount, reason \\ nil)
       when is_number(amount) or is_binary(amount) do
     Repo.transaction(fn ->
       new_amount = Decimal.add(account.amount, Decimal.new(amount))
@@ -33,7 +34,7 @@ defmodule Bank.Accounts do
         |> Repo.update()
 
       %Transaction{}
-      |> Transaction.changeset(%{amount: amount, type: "credit", account_id: account.id})
+      |> Transaction.changeset(%{amount: amount, type: "credit", account_id: account.id, reason: reason})
       |> Repo.insert!()
 
       updated
@@ -43,7 +44,8 @@ defmodule Bank.Accounts do
   @doc """
   Debit an account by amount and record transaction.
   """
-  def debit_account(%Bank.Accounts.Account{} = account, amount)
+
+  def debit_account(%Bank.Accounts.Account{} = account, amount, reason \\ nil)
       when is_number(amount) or is_binary(amount) do
     Repo.transaction(fn ->
       new_amount = Decimal.sub(account.amount, Decimal.new(amount))
@@ -58,7 +60,7 @@ defmodule Bank.Accounts do
         |> Repo.update()
 
       %Transaction{}
-      |> Transaction.changeset(%{amount: amount, type: "debit", account_id: account.id})
+      |> Transaction.changeset(%{amount: amount, type: "debit", account_id: account.id, reason: reason})
       |> Repo.insert!()
 
       updated

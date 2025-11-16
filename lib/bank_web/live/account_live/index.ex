@@ -1,49 +1,236 @@
-defmodule BankWeb.AccountLive.Index do
-  use BankWeb, :live_view
 
-  alias Bank.Accounts
-  alias Bank.Accounts.Account
+  defmodule BankWeb.AccountLive.Index do
+    use BankWeb, :live_view
+    alias Bank.Accounts
+    alias Bank.Accounts.Account
+
+    @impl true
+    def handle_event("toggle_chart_filters", _params, socket) do
+      {:noreply, assign(socket, :show_chart_filters, !Map.get(socket.assigns, :show_chart_filters, false))}
+    end
+
+  @impl true
+  def handle_event("filter_chart", params, socket) do
+    user_id = Map.get(params, "user_id", "")
+    type = Map.get(params, "type", "")
+    start_date = Map.get(params, "start_date", "")
+    end_date = Map.get(params, "end_date", "")
+
+    chart_user_id = if user_id == "", do: nil, else: String.to_integer(user_id)
+    chart_type = if type == "", do: nil, else: type
+    chart_start_date = if start_date == "", do: nil, else: start_date
+    chart_end_date = if end_date == "", do: nil, else: end_date
+
+    # Filter transactions for the chart only
+    chart_transactions = Bank.Accounts.list_all_transactions_filtered(chart_user_id, chart_start_date, chart_end_date, chart_type)
+    chart_data = build_chart_data(chart_transactions, chart_user_id)
+
+    {:noreply,
+      socket
+      |> assign(:chart_user_id, chart_user_id)
+      |> assign(:chart_type, chart_type)
+      |> assign(:chart_start_date, chart_start_date)
+      |> assign(:chart_end_date, chart_end_date)
+      |> assign(:chart_data, chart_data)
+    }
+  end
+
+  @impl true
+  def handle_event("toggle_filters", _params, socket) do
+    {:noreply, assign(socket, :show_filters, !socket.assigns.show_filters)}
+  end
+
+  @impl true
+  def handle_event("validate_import", _params, socket) do
+    # No-op for now, just prevent FunctionClauseError
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("open_credit_modal", %{"id" => id} = _params, socket) do
+    account = Enum.find(socket.assigns.accounts, &("#{&1.id}" == id))
+
+    if account do
+      form = to_form(%{"amount" => "", "reason" => ""}, as: :credit)
+      random_str = :crypto.strong_rand_bytes(4) |> Base.url_encode64(padding: false)
+      modal_uid = "#{:erlang.unique_integer([:positive, :monotonic])}-#{random_str}"
+
+      {:noreply,
+       socket
+       |> assign(:credit_modal_open, true)
+       |> assign(:transaction_account, account)
+       |> assign(:credit_form, form)
+       |> assign(:modal_uid, modal_uid)}
+    else
+      changeset = Accounts.change_account(%Account{})
+      {:noreply,
+        socket
+        |> put_flash(:error, "Account not found")
+        |> assign(:form, to_form(changeset, as: :account))}
+    end
+  end
 
   @impl true
   def mount(_params, _session, socket) do
-    if connected?(socket), do: Phoenix.PubSub.subscribe(Bank.PubSub, "accounts:updates")
     accounts = Accounts.list_accounts()
     changeset = Accounts.change_account(%Account{})
+    all_transactions = Bank.Accounts.list_all_transactions_filtered(nil, nil, nil, nil)
+    chart_data = build_chart_data(all_transactions, nil)
+    socket =
+      socket
+      |> assign(:accounts, accounts)
+      |> assign(:form, to_form(changeset, as: :account))
+      |> assign(:all_transactions, all_transactions)
+      |> assign(:chart_data, chart_data)
+      |> assign(:show_filters, false)
+      |> assign(:show_chart_filters, false)
+      |> assign(:chart_user_id, nil)
+      |> assign(:chart_type, nil)
+      |> assign(:chart_start_date, nil)
+      |> assign(:chart_end_date, nil)
+      |> assign(:filter_account_id, nil)
+      |> assign(:filter_start_date, nil)
+      |> assign(:filter_end_date, nil)
+      |> assign(:filter_type, nil)
+      |> assign(:edit_modal_open, false)
+      |> assign(:edit_account, nil)
+      |> assign(:edit_form, nil)
+      |> assign(:transaction_modal_open, false)
+      |> assign(:transaction_account, nil)
+      |> assign(:transactions, [])
+      |> assign(:debit_modal_open, false)
+      |> assign(:debit_form, nil)
+      |> assign(:credit_modal_open, false)
+      |> assign(:credit_form, nil)
+      |> assign(:modal_uid, nil)
+      |> allow_upload(:xls_file, accept: ~w(.xlsx .xls), max_entries: 1)
+    {:ok, socket}
+  end
 
-    # Default filter values: all accounts, no date range
-    filter_account_id = nil
-    filter_start_date = nil
-    filter_end_date = nil
-    filter_type = nil
+  # ...existing code...
 
-    all_transactions =
-      Accounts.list_all_transactions_filtered(
-        filter_account_id,
-        filter_start_date,
-        filter_end_date,
-        filter_type
-      )
 
-    {:ok,
-     socket
-     |> assign(:accounts, accounts)
-     |> assign(:form, to_form(changeset, as: :account))
-     |> assign(:edit_modal_open, false)
-     |> assign(:edit_account, nil)
-     |> assign(:edit_form, nil)
-     |> assign(:credit_modal_open, false)
-     |> assign(:debit_modal_open, false)
-     |> assign(:transaction_modal_open, false)
-     |> assign(:transaction_account, nil)
-     |> assign(:transactions, [])
-     |> assign(:credit_form, nil)
-     |> assign(:debit_form, nil)
-     |> assign(:all_transactions, all_transactions)
-     |> assign(:filter_account_id, filter_account_id)
-     |> assign(:filter_start_date, filter_start_date)
-     |> assign(:filter_end_date, filter_end_date)
-     |> assign(:filter_type, filter_type)
-     |> assign(:show_filters, false)}
+  defp build_chart_data(transactions, user_id) do
+    # Get all accounts from assigns (fall back to DB if not present)
+    accounts =
+      case Process.get(:accounts) do
+        nil -> Bank.Accounts.list_accounts()
+        accs -> accs
+      end
+
+    filtered =
+      if user_id do
+        Enum.filter(transactions, &(&1.account_id == user_id))
+      else
+        transactions
+      end
+
+    IO.inspect(%{user_id: user_id, filtered: filtered}, label: "[Chart Debug] Filtered transactions for user")
+
+    # Group by date (YYYY-MM-DD)
+    grouped =
+      filtered
+      |> Enum.group_by(fn tx ->
+        tx.inserted_at
+        |> NaiveDateTime.to_date()
+        |> Date.to_iso8601()
+      end)
+
+    dates = grouped |> Map.keys() |> Enum.sort()
+    credits = Enum.map(dates, fn date ->
+      grouped[date]
+      |> Enum.filter(&(&1.type == "credit"))
+      |> Enum.map(& &1.amount)
+      |> Enum.reduce(Decimal.new(0), &Decimal.add/2)
+      |> Decimal.to_float()
+    end)
+    debits = Enum.map(dates, fn date ->
+      grouped[date]
+      |> Enum.filter(&(&1.type == "debit"))
+      |> Enum.map(& &1.amount)
+      |> Enum.reduce(Decimal.new(0), &Decimal.add/2)
+      |> Decimal.to_float()
+    end)
+
+    # Determine initial amount
+    initial_amount =
+      if user_id do
+        accounts
+        |> Enum.filter(&(&1.id == user_id))
+        |> Enum.map(& &1.amount)
+        |> List.first()
+        |> case do
+          nil -> Decimal.new(0)
+          val -> val
+        end
+      else
+        accounts
+        |> Enum.map(& &1.amount)
+        |> Enum.reduce(Decimal.new(0), &Decimal.add/2)
+      end
+
+    # Subtract all credits and add all debits to get the initial amount at the start of the graph
+    # (since account.amount is current, not initial)
+    all_credits =
+      filtered
+      |> Enum.filter(&(&1.type == "credit"))
+      |> Enum.map(& &1.amount)
+      |> Enum.reduce(Decimal.new(0), &Decimal.add/2)
+    all_debits =
+      filtered
+      |> Enum.filter(&(&1.type == "debit"))
+      |> Enum.map(& &1.amount)
+      |> Enum.reduce(Decimal.new(0), &Decimal.add/2)
+
+    graph_initial = Decimal.sub(Decimal.add(initial_amount, all_debits), all_credits)
+
+    # Calculate running amount per date (sorted by date), starting from graph_initial
+    running_amounts =
+      dates
+      |> Enum.reduce({[], graph_initial}, fn date, {acc, prev_amount} ->
+        txs = grouped[date]
+        day_total =
+          txs
+          |> Enum.reduce(prev_amount, fn tx, amt ->
+            case tx.type do
+              "credit" -> Decimal.add(amt, tx.amount)
+              "debit" -> Decimal.sub(amt, tx.amount)
+              _ -> amt
+            end
+          end)
+        {[Decimal.to_float(day_total) | acc], day_total}
+      end)
+      |> elem(0)
+      |> Enum.reverse()
+
+    %{
+      labels: dates,
+      datasets: [
+        %{
+          label: "Credit",
+          data: credits,
+          borderColor: "#22c55e",
+          backgroundColor: "#22c55e33",
+          tension: 0.3
+        },
+        %{
+          label: "Debit",
+          data: debits,
+          borderColor: "#f59e42",
+          backgroundColor: "#f59e4233",
+          tension: 0.3
+        },
+        %{
+          label: "Amount",
+          data: running_amounts,
+          borderColor: "#3b82f6",
+          backgroundColor: "#3b82f633",
+          tension: 0.3,
+          yAxisID: "y1"
+        }
+      ]
+    }
+    |> Jason.encode!()
   end
 
   @impl true
@@ -68,46 +255,76 @@ defmodule BankWeb.AccountLive.Index do
     all_transactions =
       Bank.Accounts.list_all_transactions_filtered(account_id, start_date, end_date, type)
 
+    # Update chart data for the filtered transactions
+    chart_data = build_chart_data(all_transactions, socket.assigns.chart_user_id)
+
     {:noreply,
      socket
      |> assign(:all_transactions, all_transactions)
      |> assign(:filter_account_id, account_id)
      |> assign(:filter_start_date, start_date)
      |> assign(:filter_end_date, end_date)
-     |> assign(:filter_type, type)}
+     |> assign(:filter_type, type)
+     |> assign(:chart_data, chart_data)}
+
   end
 
   @impl true
-  def handle_event("toggle_filters", _params, socket) do
-    {:noreply, assign(socket, :show_filters, !socket.assigns.show_filters)}
+  def handle_event("import_xls", _params, socket) do
+    consume_uploaded_entries(socket, :xls_file, fn %{path: path}, _entry ->
+      # TODO: Parse the Excel file and insert records
+      result =
+        case Xlsxir.multi_extract(path) do
+          {:ok, tid} ->
+            rows = Xlsxir.get_list(tid)
+            IO.inspect(rows, label: "XLSXIR ROWS")
+            # Extract account name after MR or MRS in each row
+            Enum.each(rows, fn row ->
+              row_str =
+                row
+                |> Enum.map(&to_string/1)
+                |> Enum.join(" ")
+              # Try to extract from each cell, not just the joined row
+              name =
+                row
+                |> Enum.filter(&is_binary/1)
+                |> Enum.map(fn cell ->
+                  match = Regex.run(~r/(?:MR\.?|MRS\.?)[\s]+([A-Za-z]+)/i, cell, capture: :all_but_first)
+                  IO.inspect(%{cell: cell, match: match}, label: "Cell Regex Debug")
+                  match
+                end)
+                |> Enum.find(fn
+                  [name] when is_binary(name) -> true
+                  _ -> false
+                end)
+                |> case do
+                  [name] -> String.capitalize(String.trim(name))
+                  _ -> nil
+                end
+              IO.inspect(name, label: "Account Holder Name")
+            end)
+            Xlsxir.close(tid)
+            :ok
+          [ok: tid] ->
+            rows = Xlsxir.get_list(tid)
+            IO.inspect(rows, label: "XLSXIR ROWS")
+            Xlsxir.close(tid)
+            :ok
+          err ->
+            IO.inspect(err, label: "XLSXIR ERROR")
+            :error
+        end
+      {:ok, result}
+    end)
+    {:noreply, put_flash(socket, :info, "Import complete (stub)")}
   end
 
   @impl true
-  def handle_event("open_credit_modal", %{"id" => id}, socket) do
+  def handle_event("open_debit_modal", %{"id" => id} = _params, socket) do
     account = Enum.find(socket.assigns.accounts, &("#{&1.id}" == id))
 
     if account do
-      form = to_form(%{"amount" => ""}, as: :credit)
-      random_str = :crypto.strong_rand_bytes(4) |> Base.url_encode64(padding: false)
-      modal_uid = "#{:erlang.unique_integer([:positive, :monotonic])}-#{random_str}"
-
-      {:noreply,
-       socket
-       |> assign(:credit_modal_open, true)
-       |> assign(:transaction_account, account)
-       |> assign(:credit_form, form)
-       |> assign(:modal_uid, modal_uid)}
-    else
-      {:noreply, put_flash(socket, :error, "Account not found")}
-    end
-  end
-
-  @impl true
-  def handle_event("open_debit_modal", %{"id" => id}, socket) do
-    account = Enum.find(socket.assigns.accounts, &("#{&1.id}" == id))
-
-    if account do
-      form = to_form(%{"amount" => ""}, as: :debit)
+  form = to_form(%{"amount" => "", "reason" => ""}, as: :debit)
       random_str = :crypto.strong_rand_bytes(4) |> Base.url_encode64(padding: false)
       modal_uid = "#{:erlang.unique_integer([:positive, :monotonic])}-#{random_str}"
 
@@ -118,7 +335,11 @@ defmodule BankWeb.AccountLive.Index do
        |> assign(:debit_form, form)
        |> assign(:modal_uid, modal_uid)}
     else
-      {:noreply, put_flash(socket, :error, "Account not found")}
+      changeset = Accounts.change_account(%Account{})
+      {:noreply,
+        socket
+        |> put_flash(:error, "Account not found")
+        |> assign(:form, to_form(changeset, as: :account))}
     end
   end
 
@@ -145,15 +366,21 @@ defmodule BankWeb.AccountLive.Index do
   @impl true
   def handle_event("credit", %{"credit" => %{"amount" => amount}}, socket) do
     account = socket.assigns.transaction_account
-
-    case Accounts.credit_account(account, amount) do
+    reason = socket.assigns.credit_form[:reason].value
+    case Accounts.credit_account(account, amount, reason) do
       {:ok, _updated} ->
         BankWeb.PageBroadcaster.broadcast_update("accounts:updates")
         accounts = Accounts.list_accounts()
+        account_id = socket.assigns[:filter_account_id]
+        start_date = socket.assigns[:filter_start_date]
+        end_date = socket.assigns[:filter_end_date]
+        type = socket.assigns[:filter_type]
+        all_transactions = Bank.Accounts.list_all_transactions_filtered(account_id, start_date, end_date, type)
 
         {:noreply,
          socket
          |> assign(:accounts, accounts)
+         |> assign(:all_transactions, all_transactions)
          |> assign(:credit_modal_open, false)
          |> assign(:transaction_account, nil)
          |> assign(:credit_form, nil)
@@ -167,15 +394,21 @@ defmodule BankWeb.AccountLive.Index do
   @impl true
   def handle_event("debit", %{"debit" => %{"amount" => amount}}, socket) do
     account = socket.assigns.transaction_account
-
-    case Accounts.debit_account(account, amount) do
+    reason = socket.assigns.debit_form[:reason].value
+    case Accounts.debit_account(account, amount, reason) do
       {:ok, _updated} ->
         BankWeb.PageBroadcaster.broadcast_update("accounts:updates")
         accounts = Accounts.list_accounts()
+        account_id = socket.assigns[:filter_account_id]
+        start_date = socket.assigns[:filter_start_date]
+        end_date = socket.assigns[:filter_end_date]
+        type = socket.assigns[:filter_type]
+        all_transactions = Bank.Accounts.list_all_transactions_filtered(account_id, start_date, end_date, type)
 
         {:noreply,
          socket
          |> assign(:accounts, accounts)
+         |> assign(:all_transactions, all_transactions)
          |> assign(:debit_modal_open, false)
          |> assign(:transaction_account, nil)
          |> assign(:debit_form, nil)
@@ -190,7 +423,7 @@ defmodule BankWeb.AccountLive.Index do
   end
 
   @impl true
-  def handle_event("show_transactions", %{"id" => id}, socket) do
+  def handle_event("show_transactions", %{"id" => id} = _params, socket) do
     account = Enum.find(socket.assigns.accounts, &("#{&1.id}" == id))
 
     if account do
@@ -217,7 +450,7 @@ defmodule BankWeb.AccountLive.Index do
 
   # --- All handle_event/3 clauses grouped together ---
   @impl true
-  def handle_event("delete_account", %{"id" => id}, socket) do
+  def handle_event("delete_account", %{"id" => id} = _params, socket) do
     account = Enum.find(socket.assigns.accounts, &("#{&1.id}" == id))
 
     if account do
@@ -226,11 +459,15 @@ defmodule BankWeb.AccountLive.Index do
     end
 
     accounts = Accounts.list_accounts()
-    {:noreply, assign(socket, :accounts, accounts)}
+    changeset = Accounts.change_account(%Account{})
+    {:noreply,
+      socket
+      |> assign(:accounts, accounts)
+      |> assign(:form, to_form(changeset, as: :account))}
   end
 
   @impl true
-  def handle_event("open_edit_modal", %{"id" => id}, socket) do
+  def handle_event("open_edit_modal", %{"id" => id} = _params, socket) do
     account = Enum.find(socket.assigns.accounts, &("#{&1.id}" == id))
 
     if account do
@@ -314,7 +551,7 @@ defmodule BankWeb.AccountLive.Index do
         BankWeb.PageBroadcaster.broadcast_update("accounts:updates")
         accounts = Accounts.list_accounts()
 
-        changeset = Accounts.change_account(%Account{})
+        changeset = Accounts.change_account(%Account{}) |> Map.put(:action, :insert)
 
         {:noreply,
          socket

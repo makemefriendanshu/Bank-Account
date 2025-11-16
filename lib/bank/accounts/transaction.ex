@@ -3,17 +3,18 @@ defmodule Bank.Accounts.Transaction do
   import Ecto.Changeset
 
   schema "transactions" do
-    field(:amount, :decimal)
-    # "credit" or "debit"
-    field(:type, :string)
+  field(:amount, :decimal)
+  # "credit" or "debit"
+  field(:type, :string)
+  field(:reason, :string)
     belongs_to(:account, Bank.Accounts.Account)
     timestamps()
   end
 
   def changeset(transaction, attrs) do
     transaction
-    |> cast(attrs, [:amount, :type, :account_id])
-    |> validate_required([:amount, :type, :account_id])
+  |> cast(attrs, [:amount, :type, :account_id, :reason])
+  |> validate_required([:amount, :type, :account_id])
     |> validate_inclusion(:type, ["credit", "debit"])
     |> validate_number(:amount, greater_than: 0)
   end
